@@ -19,6 +19,17 @@ let tanks = {
 
 let pendingCommand = null; // 'ON' | 'OFF' | 'AUTO' | null - always targets tank 1 (the only pump)
 
+// Rolling log of recent events, mirrors what you'd see on Node 2's Serial Monitor
+const MAX_LOG_ENTRIES = 200;
+let logBuffer = [];
+
+function pushLog(message) {
+  const entry = { message, timestamp: Date.now() };
+  logBuffer.push(entry);
+  if (logBuffer.length > MAX_LOG_ENTRIES) logBuffer.shift();
+  io.emit('log', entry);
+}
+
 // --- Node 2 (master) posts telemetry here for either tank ---
 app.post('/api/telemetry', (req, res) => {
   const { tankId, level, distance, pump, manual } = req.body;
@@ -34,6 +45,11 @@ app.post('/api/telemetry', (req, res) => {
     manual: Boolean(manual),
     lastUpdate: Date.now(),
   };
+
+  const tankName = tankId === '1' ? 'Overhead' : 'Underground';
+  pushLog(
+    `Tank ${tankId} (${tankName}): level=${tanks[tankId].level}% distance=${tanks[tankId].distance}mm pump=${tanks[tankId].pump ? 'ON' : 'OFF'}${tanks[tankId].manual ? ' [MANUAL]' : ''}`
+  );
 
   io.emit('telemetry', tanks[tankId]);
   res.json({ ok: true });
@@ -53,8 +69,14 @@ app.post('/api/relay', (req, res) => {
     return res.status(400).json({ error: 'command must be ON, OFF, or AUTO' });
   }
   pendingCommand = command;
+  pushLog(`Relay command queued from website: ${command}`);
   io.emit('relay_command_queued', { command, queuedAt: Date.now() });
   res.json({ ok: true, queued: command });
+});
+
+// --- Recent log history for a newly loaded frontend ---
+app.get('/api/logs', (req, res) => {
+  res.json(logBuffer);
 });
 
 // --- Initial state for the frontend on page load ---
